@@ -1,0 +1,443 @@
+---
+title: "Stat_analysis_zebra_SR"
+author: "Justine Boutry"
+date: "2023-01-22"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE, warning = F)
+library(readr)
+library(GGally)
+library(glmmTMB)
+library(sjPlot)
+library(DHARMa)
+library(MuMIn)
+library(MASS)
+library(lme4)
+```
+
+# Determination of sex in embryos injected with an oncogenic plasmid and in their offspring
+
+```{r cars}
+F0 <- read_delim("F0.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+F0$SR <- F0$Nb_Female/F0$Nb_tot
+
+F0$Aquarium <- as.factor(F0$Aquarium)
+F0$GFP <- as.factor(F0$GFP)
+
+summary(F0)
+```
+
+# Analysis of the sexe ratios in the F0
+
+## Graphical representation
+
+```{r}
+# Confident interval calculations
+
+prop.test(sum(F0$Nb_Female[F0$GFP=="Pos"]), sum(F0$Nb_tot[F0$GFP=="Pos"]))
+prop.test(sum(F0$Nb_Female[F0$GFP=="Neg"]), sum(F0$Nb_tot[F0$GFP=="Neg"]))
+
+df <- data.frame(GFP=c("Neg", "Pos"),
+                moy=c(
+                  mean(F0[F0$GFP=="Neg",]$Nb_Female/F0[F0$GFP=="Neg",]$Nb_tot),
+                  mean(F0[F0$GFP=="Pos",]$Nb_Female/F0[F0$GFP=="Pos",]$Nb_tot)),
+                born.inf=c(0.4077056,0.4338454),
+                born.sup=c(0.5405642,0.5988334))
+
+(a <- ggplot(data = df, aes(y=moy, x=GFP, fill=GFP))+
+  geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=born.inf, ymax=born.sup), width=.2,
+                 position=position_dodge(.9))+
+  #geom_point(aes(color=GFP), size = 3, alpha = .8)+
+  geom_hline(yintercept=0.5, lty=2, color="darkgrey")+
+  ylim(0,0.8)+
+  labs(color="Expression of the \noncogenic plasmid", fill="Expression of the \noncogenic plasmid")+
+  ylab("Proportion of females\n")+
+  xlab("\nF0 generation\nfrom injected emrbyos")+
+  scale_fill_manual(values = c("lightgrey", "darkred"))+
+  scale_color_manual(values = c("lightgrey", "darkred"))+
+  theme_minimal()+
+  theme(
+    panel.grid.major.x = element_blank(),
+        axis.title.x=element_text(vjust=0,  
+                                  size=20),  # X axis title
+        axis.title.y=element_text(size=20, angle = 90),  # Y axis title
+        axis.text.x=element_text(size=15,
+                                 vjust=.5),  # X axis text
+        axis.text.y=element_text(size=12))+
+   ggsignif::geom_signif(comparisons = list(c("Neg", "Pos")), map_signif_level = TRUE, y_position = 0.7))
+ 
+ggsave("SR_F0.jpg", a, device = "jpg")
+```
+
+### Random effect selection
+
+```{r, echo=T, message=FALSE}
+mod_SR_RN <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP*Nb_tot+ (1|Exp/Aquarium), family = "binomial", REML = F)
+mod_SR_R1 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP*Nb_tot+ (1|Aquarium), family = "binomial", REML = F)
+mod_SR_R0 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP*Nb_tot, family = "binomial", REML = F)
+AICc(mod_SR_RN, mod_SR_R1,  mod_SR_R0)
+Weights(AICc(mod_SR_RN, mod_SR_R1,  mod_SR_R0))
+```
+
+### Fixed effects selection
+
+```{r, echo=T, message=FALSE}
+mod_SR_1 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP*Nb_tot, family = "binomial", REML = T)
+mod_SR_2 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP+Nb_tot, family = "binomial", REML = T)
+mod_SR_3 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~GFP, family = "binomial", REML = T)
+mod_SR_4 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~Nb_tot, family = "binomial", REML = T)
+mod_SR_0 <- glmmTMB(data=F0, cbind(Nb_Female, Nb_male)~1, family = "binomial", REML = T)
+
+AICc(mod_SR_0, mod_SR_2,  mod_SR_3, mod_SR_4, mod_SR_1)
+Weights(AICc(mod_SR_0, mod_SR_2,  mod_SR_3, mod_SR_4, mod_SR_1))
+
+simulateResiduals(mod_SR_0, plot=T)
+```
+
+None of the effects measured in the study explains the sex ratio of F0 individuals from eggs injected with plasmid or not.
+
+### Power analysis
+
+```{r, echo=FALSE}
+
+(muSRCtrl <- mean(F0$SR[F0$GFP=="Neg"]))
+(nbCtrl <- length(F0$SR[F0$GFP=="Neg"]))
+(nCtrl <-sum(F0$Nb_tot[F0$GFP=="Neg"]))
+
+(muSRTum <- mean(F0$SR[F0$GFP=="Pos"]))
+(nbTum <- mean(length(F0$SR[F0$GFP=="Pos"])))
+(nTum <- sum(F0$Nb_tot[F0$GFP=="Pos"]))
+
+i=0
+q1 <- NULL
+q3 <- NULL
+Biais <- NULL
+
+Results <- matrix(0, 1000, 40)
+Ratios_accept <- NULL
+
+# Avec un t - test
+i=1
+for (j in 1 : 1000){
+  for (i in 1:40){
+  FemCtrl <- rbinom(n=1, size= nCtrl, p= muSRCtrl)
+  FemTum  <- rbinom(n=1, size= nTum, p= (muSRCtrl+(i*0.01)))
+  Results[j, i] <- prop.test(c(FemCtrl, FemTum), n=c(nCtrl, nTum))$p.value
+  q1[i] <- quantile(Results[,i], 0.025)
+  q3[i] <- quantile(Results[,i], 0.975)
+  }
+}
+
+pm <- apply(Results, 2, mean)
+biais <- seq(1*0.01:40*0.01)
+
+plot(biais, pm, type = "l", col = "red", 
+            main="Robustness analysis",
+            xlab="Sex Ratio Biais (%)",
+            ylab = "Average p-value (1 000 simulations)",
+          ylim=c(0,0.30),
+          xlim=c(0,40))+abline(h=0.05, lty=3, col="grey")
+
+
+```
+
+# Impact of the cancer development on the offspring F1
+
+```{r}
+F1 <- read_delim("F1.txt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+F1$Rep <- as.factor(F1$Rep)
+F1$Breeding_date <- as.factor(F1$Breeding_date)
+F1$GFP <- as.factor(F1$GFP)
+F1$parent <- as.factor(F1$parent)
+F1$SR <- F1$femelles/F1$Total
+
+summary(F1)
+```
+
+## Size of the pond 3 days post fecundation
+
+```{r}
+(a <- ggplot(data = F1, aes(y= F1$Nb_eclo_3d, x=GFP, fill=GFP))+
+  #geom_hline(yintercept=0.5, lty=2, color="darkgrey")+
+  geom_boxplot(alpha=.7)+
+  geom_point(aes(color=GFP), size = 3)+
+  #ylim(0.1,0.9)+
+  labs(color="Expression of the \noncogenic plasmid", fill="Expression of the \noncogenic plasmid")+
+  ylab("Number of viable embryos (3dpf)\n")+
+  xlab("\nF1 generation \n from tumorous mothers")+
+  scale_fill_manual(values = c("lightgrey", "darkred"))+
+  scale_color_manual(values = c("lightgrey", "darkred"))+
+  theme_minimal()+
+  theme(
+    panel.grid.major.x = element_blank(),
+        axis.title.x=element_text(vjust=0,  
+                                  size=20),  # X axis title
+        axis.title.y=element_text(size=20, angle = 90),  # Y axis title
+        axis.text.x=element_text(size=15,
+                                 vjust=.5),  # X axis text
+        axis.text.y=element_text(size=12))+ 
+   ggsignif::geom_signif(comparisons = list(c("neg", "pos")), map_signif_level = TRUE, y_position = 320)
+ )
+ggsave("SR_F1_Nb_egg.jpg", a, device = "jpg")
+```
+
+### Random effects selection
+
+```{r, echo=FALSE, message=FALSE}
+mod_3dp_RN <- glmmTMB(data=F1, Nb_eclo_3d~GFP+ (1|Rep/Breeding_date), family = "poisson", REML = F)
+mod_3dp_R1 <- glmmTMB(data=F1, Nb_eclo_3d~GFP+ (1|Breeding_date), family = "poisson", REML = F)
+mod_3dp_R0 <- glmmTMB(data=F1, Nb_eclo_3d~GFP, family = "poisson", REML = F)
+AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0)
+Weights(AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0))
+```
+
+Here it is important to take into account the influence of the breeding date on the total number of eggs released.
+
+### Fixed effects selection
+
+```{r, echo=FALSE, message=FALSE}
+mod_3dp_R1 <- glmmTMB(data=F1, Nb_eclo_3d~GFP+ (1|Breeding_date), family = "poisson", REML = T)
+mod_3dp_R1_0 <- glmmTMB(data=F1, Nb_eclo_3d~1+ (1|Breeding_date), family = "poisson", REML = T)
+
+AICc(mod_3dp_R1, mod_3dp_R1_0)
+Weights(AICc(mod_3dp_R1, mod_3dp_R1_0))
+
+simulateResiduals(mod_3dp_R1, plot=T)
+
+mod_3dp_R1 <- glmmTMB(data=F1, Nb_eclo_3d~GFP+ (1|Breeding_date), family = "poisson", REML = F)
+tab_model(mod_3dp_R1, show.intercept = F)
+```
+
+The cancerous females lays more eggs than the non cancerous ones.
+
+## Total number of individuals surviving 13 weeks
+
+### Graphical representation
+
+```{r, echo=FALSE, message=FALSE}
+
+(a <- ggplot(data = F1, aes(y= F1$Total, x=GFP, fill=GFP))+
+  #geom_hline(yintercept=0.5, lty=2, color="darkgrey")+
+  geom_boxplot(alpha=0.7)+
+  geom_point(aes(color=GFP), size = 3)+
+  #ylim(0.1,0.9)+
+  labs(color="Expression of the \noncogenic plasmid", fill="Expression of the \noncogenic plasmid")+
+  ylab("Average number of descendant (13th week)")+
+  xlab("\nF1 generation \n from tumorous mothers")+
+  scale_fill_manual(values = c("lightgrey", "darkred"))+
+  scale_color_manual(values = c("lightgrey", "darkred"))+
+  theme_minimal()+
+  theme(
+    panel.grid.major.x = element_blank(),
+        axis.title.x=element_text(vjust=0,  
+                                  size=20),  # X axis title
+        axis.title.y=element_text(size=20, angle = 90),  # Y axis title
+        axis.text.x=element_text(size=15,
+                                 vjust=.5),  # X axis text
+        axis.text.y=element_text(size=12))+ 
+   ggsignif::geom_signif(comparisons = list(c("neg", "pos")), map_signif_level = TRUE, y_position = 110)
+ )
+ggsave("SR_F1_nbTot.jpg", a, device = "jpg")
+```
+
+### Random effects selection
+
+```{r, echo=FALSE, message=FALSE}
+mod_Mat_R1 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~GFP+ (1|Rep/Breeding_date), family = "binomial", REML = F)
+mod_Mat_R2 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~GFP+ (1|Breeding_date), family = "binomial", REML = F)
+mod_Mat_R0 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~GFP, family = "binomial", REML = F)
+AICc(mod_Mat_R1, mod_Mat_R2,  mod_Mat_R0)
+Weights(AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0))
+```
+
+Here it is important to take into account the impact of the breeding date, nested into the experimental trial.
+
+### Fixed effects selection
+
+```{r, echo=FALSE, message=FALSE}
+mod_Mat_R1 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~GFP+ (1|Rep/Breeding_date), family = "binomial", REML = T)
+mod_Mat_R1_0 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~1+ (1|Rep/Breeding_date), family = "binomial", REML = T)
+AICc(mod_Mat_R1, mod_Mat_R1_0)
+Weights(AICc(mod_Mat_R1, mod_Mat_R1_0))
+
+mod_Mat_R1 <- glmmTMB(data=F1, cbind(Total, Nb_eclo_3d)~GFP+ (1|Rep/Breeding_date), family = "binomial", REML = F)
+tab_model(mod_Mat_R1, show.intercept = F)
+```
+
+The cancerous females have an increased ratio of eggs layed reaching the adult age compared to the healthy ones.
+
+## Sexe-ratio in the F1 
+
+Crosses were made every day. Each female was presented to a male several times until mating occurred. The eggs were then collected and the offspring sexed at 13 weeks.
+
+### Random effects selection
+
+```{r, echo=FALSE, message=FALSE}
+mod_SRF1_R1 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Nb_eclo_3d+ (1|Rep/Breeding_date), family = "binomial", REML = F)
+mod_SRF1_R2 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = F)
+mod_SRF1_R0 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Nb_eclo_3d, family = "binomial", REML = F)
+
+AICc(mod_SRF1_R1,mod_SRF1_R2,mod_SRF1_R0)
+Weights(AICc(mod_SRF1_R1,mod_SRF1_R2,mod_SRF1_R0))
+```
+
+There is non need to take into account random effects in this analysis.
+
+### Fixed effects selection
+
+```{r, echo=TRUE, message=FALSE}
+mod_SR_1 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Total*Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+
+mod_SR_2 <- glmmTMB(data=F1, cbind(femelles, males)~GFP+Total*Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_3 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Total+Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_4 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Nb_eclo_3d+Total+ (1|Breeding_date), family = "binomial", REML = T)
+
+mod_SR_5 <- glmmTMB(data=F1, cbind(femelles, males)~Total*Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_6 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Total+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_7 <- glmmTMB(data=F1, cbind(femelles, males)~GFP*Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+
+mod_SR_8 <- glmmTMB(data=F1, cbind(femelles, males)~Total+Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_9 <- glmmTMB(data=F1, cbind(femelles, males)~GFP+Total+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_10 <- glmmTMB(data=F1, cbind(femelles, males)~GFP+Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_11 <- glmmTMB(data=F1, cbind(femelles, males)~GFP+Total+Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+
+mod_SR_12 <- glmmTMB(data=F1, cbind(femelles, males)~Nb_eclo_3d+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_13 <- glmmTMB(data=F1, cbind(femelles, males)~GFP+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_14 <- glmmTMB(data=F1, cbind(femelles, males)~Total+ (1|Breeding_date), family = "binomial", REML = T)
+mod_SR_15 <- glmmTMB(data=F1, cbind(femelles, males)~1+ (1|Breeding_date), family = "binomial", REML = T)
+
+AICc(mod_SR_1, mod_SR_2, mod_SR_3, mod_SR_4,
+     mod_SR_5, mod_SR_6, mod_SR_7, mod_SR_8, mod_SR_9,
+     mod_SR_10, mod_SR_11, mod_SR_12, mod_SR_13, mod_SR_14,
+     mod_SR_15)
+Weights(AICc(mod_SR_1, mod_SR_2, mod_SR_3, mod_SR_4,
+     mod_SR_5, mod_SR_6, mod_SR_7, mod_SR_8, mod_SR_9,
+     mod_SR_10, mod_SR_11, mod_SR_12, mod_SR_13, mod_SR_14,
+     mod_SR_15))
+
+mod_SR_15 <- glmmTMB(data=F1, cbind(femelles, males)~1+ (1|Breeding_date), family = "binomial", REML = F)
+
+simulateResiduals(mod_SR_15, plot = T)
+```
+
+There is absolutely no variations of the sex ratio than we can attributed to any effects we measured.
+
+```{r}
+
+(a <- ggplot(data = F1, aes(y= femelles/Total, x=GFP, fill=GFP))+
+  geom_hline(yintercept=0.5, lty=2, color="darkgrey")+
+  geom_boxplot(alpha=0.7)+
+  geom_point(aes(color=GFP), size = 3, alpha = .8)+
+  ylim(0.1,0.9)+
+  labs(color="Expression of the \noncogenic plasmid", fill="Expression of the \noncogenic plasmid")+
+  ylab("Proportion of females\n")+
+  xlab("\nF1 generation\n from tumorous females")+
+  scale_fill_manual(values = c("lightgrey", "darkred"))+
+  scale_color_manual(values = c("lightgrey", "darkred"))+
+  theme_minimal()+
+  theme(
+    panel.grid.major.x = element_blank(),
+        axis.title.x=element_text(vjust=0,  
+                                  size=20),  # X axis title
+        axis.title.y=element_text(size=20, angle = 90),  # Y axis title
+        axis.text.x=element_text(size=15,
+                                 vjust=.5),  # X axis text
+        axis.text.y=element_text(size=12))+ 
+   ggsignif::geom_signif(comparisons = list(c("neg", "pos")), map_signif_level = TRUE, y_position = 0.8)
+ )
+ggsave("SR_F1T.jpg", a, device = "jpg")
+```
+
+### Power analysis
+
+```{r}
+
+muSRCtrl <- mean(F1$SR[F1$GFP=="neg"])
+muSRTum <- mean(F1$SR[F1$GFP=="pos"])
+
+q1 <- NULL
+q1.1 <- NULL
+q3 <- NULL
+q3.1 <- NULL
+Biais <- NULL
+
+Results <- matrix(0, 1000, 40)
+Ratios_accept <- NULL
+
+# Avec glm
+i=1
+
+for (j in 1 : 1000){
+  for (i in 1:40){
+  FemCtrl <- rbinom(n=20, size= 37, p= muSRCtrl)
+  FemTum  <- rbinom(n=15, size= 53, p= (muSRCtrl+(i*0.01)))
+  data <- data.frame(GFP=c(rep("Ctrl", 20), rep("Tum", 15)), 
+                     Total=c(rep(37, 20), rep(53, 15)), 
+                     Fem=c(FemCtrl, FemTum))
+  Results[j, i] <- summary(glm(data = data, cbind(Fem, Total-Fem) ~ GFP, family = binomial))$coefficients[2,4]
+  q1.1[i] <- quantile(Results[,i], 0.025)
+  q3.1[i] <- quantile(Results[,i], 0.975)
+  }
+}
+
+pm1 <- apply(Results, 2, mean)
+
+# Avec un t - test
+
+for (j in 1 : 1000){
+  for (i in 1:40){
+  FemCtrl <- rbinom(n=20, size= 37, p= muSRCtrl)
+  FemTum  <- rbinom(n=15, size= 53, p= (muSRCtrl+(i*0.01)))
+  data <- data.frame(GFP=c(rep("Ctrl", 20), rep("Tum", 15)), 
+                     Total=c(rep(37, 20), rep(53, 15)), 
+                     Fem=c(FemCtrl, FemTum))
+  Results[j, i] <- t.test(FemCtrl/37, FemTum/53)$p.value
+  q1[i] <- quantile(Results[,i], 0.025)
+  q3[i] <- quantile(Results[,i], 0.975)
+  }
+}
+
+pm <- apply(Results, 2, mean)
+biais <- seq(1:40)
+
+plot(biais, pm, type = "l", col = "red", 
+            main="Analyse de robustesse",
+            xlab="Biais de sexe ratio",
+            ylab = "P.value",
+          ylim=c(0,0.10))+
+    points(biais, q1, type = "l", lty=2, col="red")+
+    points(biais, q3, type = "l", lty=2, col="red")+
+  points(biais, pm1, type="l",col="blue")+
+  points(biais, q1.1, type="l", lty=2, col="blue")+
+  points(biais, q3.1, type="l",lty=2, col="blue")+
+  abline(h=0.05, lty=3, col="grey")
+
+```
+
+A sex ratio bias of around 10% could have been detected, and the effect was only due to the first experiment. If I only analyze this data for experiment number 2, there is no effect.
+
+### Citations
+
+```{r}
+citation("readr")
+citation("GGally")
+citation("glmmTMB")
+citation("sjPlot")
+citation("DHARMa")
+citation("MuMIn")
+citation("MASS")
+
+sessionInfo()
+```
+
+
