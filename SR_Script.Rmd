@@ -33,7 +33,7 @@ F0$GFP <- as.factor(F0$GFP)
 summary(F0)
 ```
 
-# Analysis of the sexe ratios in the F0
+# Analysis of the sex ratios in the F0
 
 ## Graphical representation
 
@@ -201,7 +201,7 @@ AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0)
 Weights(AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0))
 ```
 
-Here it is important to take into account the influence of the breeding date on the total number of eggs released.
+Here it is important to consider the influence of the breeding date on the total number of eggs released.
 
 ### Fixed effects selection
 
@@ -218,7 +218,7 @@ mod_3dp_R1 <- glmmTMB(data=F1, Nb_eclo_3d~GFP+ (1|Breeding_date), family = "pois
 tab_model(mod_3dp_R1, show.intercept = F)
 ```
 
-The cancerous females lays more eggs than the non cancerous ones.
+The cancerous females lay more eggs than the non-cancerous ones.
 
 ## Total number of individuals surviving 13 weeks
 
@@ -260,7 +260,7 @@ AICc(mod_Mat_R1, mod_Mat_R2,  mod_Mat_R0)
 Weights(AICc(mod_3dp_RN, mod_3dp_R1,  mod_3dp_R0))
 ```
 
-Here it is important to take into account the impact of the breeding date, nested into the experimental trial.
+It is important to take into account the impact of the breeding date nested into the experimental trial.
 
 ### Fixed effects selection
 
@@ -291,7 +291,7 @@ AICc(mod_SRF1_R1,mod_SRF1_R2,mod_SRF1_R0)
 Weights(AICc(mod_SRF1_R1,mod_SRF1_R2,mod_SRF1_R0))
 ```
 
-There is non need to take into account random effects in this analysis.
+There is no need to take into account random effects in this analysis.
 
 ### Fixed effects selection
 
@@ -330,7 +330,7 @@ mod_SR_15 <- glmmTMB(data=F1, cbind(femelles, males)~1+ (1|Breeding_date), famil
 simulateResiduals(mod_SR_15, plot = T)
 ```
 
-There is absolutely no variations of the sex ratio than we can attributed to any effects we measured.
+There are no variations in the sex ratio that we can attribute to any effects we measured.
 
 ```{r}
 
@@ -424,7 +424,7 @@ plot(biais, pm, type = "l", col = "red",
 
 ```
 
-A sex ratio bias of around 10% could have been detected, and the effect was only due to the first experiment. If I only analyze this data for experiment number 2, there is no effect.
+A sex ratio bias of around 10% could have been detected.
 
 ### Citations
 
